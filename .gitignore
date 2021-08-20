@@ -1,4 +1,10 @@
 .vscode/*
 *.pyc
-unused/*
 *.log
+unused/*
+snort_conf/*
+topo/h*/*
+topo/server1/pysu*/
+topo/server2/pysu*/
+topo/*.pca*
+dump-log/*
