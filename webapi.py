@@ -24,13 +24,13 @@ import time
 
 PYTHON3 = sys.version_info > (3, 0)
 
-
 class WebApi(ControllerBase):
     def __init__(self, req, link, data, **config):
         super(WebApi, self).__init__(req, link, data, **config)
         self.api = data["webctl"]
         self.rpc_clients = data["rpc_clients"]
         self.rootdir = os.path.dirname(os.path.abspath(__file__))
+        # print("ROOT-DIR :: {}".format(self.rootdir))
 
     def make_response(self, filename):
         filetype, _ = mimetypes.guess_type(filename)
@@ -152,13 +152,35 @@ class WebApi(ControllerBase):
             res.text = s if PYTHON3 else unicode(s, "utf-8")
             return res
         return Response(status=400)  # bad request
-
+    
     @route('monitor', '/logs', methods=['GET'])
     def get_logs(self, req, **_kwargs):
         """Get log mesages
         """
         if req.GET:
             logs = self.api.read_logs()
+            res = Response(content_type="application/json")
+            res.json = logs
+            return res
+        return Response(status=400)  # bad request
+
+    @route('monitor', '/oldlogs', methods=['GET'])
+    def get_oldlogs(self, req, **_kwargs):
+        """Get log mesages
+        """
+        if req.GET:
+            logs = self.api.read_logs()
+            res = Response(content_type="application/json")
+            res.json = logs
+            return res
+        return Response(status=400)  # bad request
+
+    @route('monitor', '/snortlogs', methods=['GET'])
+    def get_snort_logs(self, req, **_kwargs):
+        """Get snort snort log mesages
+        """
+        if req.GET:
+            logs = self.api.read_snort_logs()
             res = Response(content_type="application/json")
             res.json = logs
             return res
