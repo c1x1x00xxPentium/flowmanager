@@ -1,18 +1,3 @@
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-# implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller import dpset
@@ -43,7 +28,6 @@ import re
 import time
 from logging.handlers import WatchedFileHandler
 
-
 class MainApp1(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     _CONTEXTS = {'snortlib': snortlib.SnortLib}
@@ -52,13 +36,14 @@ class MainApp1(app_manager.RyuApp):
     snortlogfile = 'snortalert.log'
     logname = 'flwmgr'
     logfile = 'flwmgr.log'
-    tmplogname = 'app'
-    tmplogfile = 'app.log'
+    tmplogname = 'sigapp'
+    tmplogfile = 'sigapp.log'
 
     def __init__(self, *args, **kwargs):
         super(MainApp1, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
         self.datapaths = {}
+
         self.snort = kwargs['snortlib']
         self.snort_port = 3
         socket_config = {'unixsock': True}
@@ -112,8 +97,10 @@ class MainApp1(app_manager.RyuApp):
         dp = ev.dp
         if ev.enter == True and (ev.dp.id != 2 or ev.dp.id != 3):
             self.logger.info("switch connected %s", dp)
+            self.loggerlocal.info("switch connected %s", dp)
         elif ev.enter == True and (ev.dp.id == 2 or ev.dp.id == 3):
             self.logger.info("PRE Rest Router connected %s", dp)
+            self.loggerlocal.info("PRE Rest Router connected %s", dp)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -122,6 +109,14 @@ class MainApp1(app_manager.RyuApp):
         parser = datapath.ofproto_parser
 
         self.logger.info(ev.msg.datapath.address)
+        self.loggerlocal.info(ev.msg.datapath.address)
+
+        # install table-miss flow entry especially for datapath.id 4 and 5
+        if datapath.id == 4 or datapath.id == 5:
+            match = parser.OFPMatch()
+            actions = [parser.OFPActionOutput(ofproto.OFPP_NORMAL)]
+            self.add_flow(datapath=datapath, priority=1, match=match,
+                table_id=0, idle=0, hard=0, actions=actions)
 
         # install table-miss flow entry
         match = parser.OFPMatch()
@@ -229,6 +224,7 @@ class MainApp1(app_manager.RyuApp):
 
                 # if ICMP Protocol
                 if protocol == in_proto.IPPROTO_ICMP:
+                    i = pkt.get_protocol(icmp.icmp)
                     self.logger.info(
                         "Local ICMP Packet Found ;; [DPID : %s , atPort : %s] ;; src : %s >> dst : %s ;; srcip : %s >> dstip : %s",
                         dpid, in_port, src, dst, srcip, dstip)
@@ -237,12 +233,13 @@ class MainApp1(app_manager.RyuApp):
                         dpid, in_port, src, dst, srcip, dstip)
                     _match = parser.OFPMatch(in_port=in_port, eth_dst=dst, eth_src=src,
                                              eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip,
-                                             ipv4_dst=dstip, ip_proto=protocol)
+                                             ipv4_dst=dstip, ip_proto=protocol,
+                                             icmpv4_type=i.type, icmpv4_code=i.code)
                     # _actions = [parser.OFPActionOutput(out_port)]
 
                     _priority = 2
-                    _idle_timeout = 0
-                    _hard_timeout = 0
+                    _idle_timeout = 1800
+                    _hard_timeout = 3000
 
                 # if TCP Protocol
                 elif protocol == in_proto.IPPROTO_TCP:
@@ -259,8 +256,8 @@ class MainApp1(app_manager.RyuApp):
                     # _actions = [parser.OFPActionOutput(out_port)]
 
                     _priority = 3
-                    _idle_timeout = 0
-                    _hard_timeout = 0
+                    _idle_timeout = 1800
+                    _hard_timeout = 3000
 
                 # If UDP Protocol
                 elif protocol == in_proto.IPPROTO_UDP:
@@ -277,16 +274,31 @@ class MainApp1(app_manager.RyuApp):
                     # _actions = [parser.OFPActionOutput(out_port)]
 
                     _priority = 4
-                    _idle_timeout = 0
-                    _hard_timeout = 0
+                    _idle_timeout = 1800
+                    _hard_timeout = 3000
 
                 # verify if we have a valid buffer_id, if yes avoid to send both
                 # flow_mod & packet_out
+
+                # The reason for packet_in
+                reason_msg = {ofproto.OFPR_NO_MATCH: "NO MATCH",
+                              ofproto.OFPR_ACTION: "ACTION",
+                              ofproto.OFPR_INVALID_TTL: "INVALID TTL"}
+                reason = reason_msg.get(msg.reason, 'UNKNOWN')
+                now = time.strftime('%b %d %H:%M:%S')
+                match = msg.match.items()
+                log = list(map(str, [now, 'PacketIn', datapath.id, msg.table_id, reason, match,
+                        hex(msg.buffer_id), msg.cookie, self.get_packet_summary(msg.data)]))
+                self.logger.info(log)
+                self.loggerlocal.info(log)
+
                 if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                    self.logger.infol("With BufferID : {}".format(msg.buffer_id))
                     self.add_flow(datapath=datapath, priority=_priority, match=_match, table_id=_table_id,
                                   idle=_idle_timeout, hard=_hard_timeout, actions=_actions, buffer_id=msg.buffer_id)
                     return
                 else:
+                    self.logger.info("Without BufferID")
                     _priority = 1
                     _table_id = 0
                     self.add_flow(datapath=datapath, priority=_priority, match=_match,
@@ -297,6 +309,11 @@ class MainApp1(app_manager.RyuApp):
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
 
+        # self.logger.info("Msg.Actions : {}".format(_actions))
+        # self.loggerlocal.info("Msg.Actions : {}".format(_actions))
+        # self.logger.info("Msg.Data : {}".format(data))
+        # self.loggerlocal.info("Msg.Data : {}".format(data))
+
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=_actions, data=data)
         datapath.send_msg(out)
@@ -304,7 +321,9 @@ class MainApp1(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, DEAD_DISPATCHER])
     def _state_change_handler(self, ev):
         datapath = ev.datapath
-        if ev.state == MAIN_DISPATCHER:
+        if ev.state == MAIN_DISPATCHER and (ev.datapath.id != 2 or ev.datapath.id != 3):
+            if datapath.id == 4 or datapath.id == 5:
+                return
             if datapath.id not in self.datapaths:
                 self.logger.info(
                     'register datapath: %016x', datapath.id)
@@ -328,33 +347,32 @@ class MainApp1(app_manager.RyuApp):
         _tcp = pkt.get_protocol(tcp.tcp)
         _udp = pkt.get_protocol(udp.udp)
 
-        if _udp:
-            self.snortlogger.info("%r", _udp)
-            self.logger.info("%r", _udp)
-        if _tcp:
-            self.snortlogger.info("%r", _tcp)
-            self.logger.info("%r", _tcp)
-        if _icmp:
-            self.snortlogger.info("%r", _icmp)
-            self.logger.info("%r", _icmp)
-        if _ipv4:
-            self.snortlogger.info("%r", _ipv4)
-            self.logger.info("%r", _ipv4)
+        full_msg = ""
+
         if _eth:
-            self.snortlogger.info("%r", _eth)
-            self.logger.info("%r", _eth)
+            full_msg += str(_eth)+str(" ;; ")
+        if _ipv4:
+            full_msg += str(_ipv4)+str(" ;; ")
+        if _icmp:
+            full_msg += str(_icmp)
+        if _tcp:
+            full_msg += str(_tcp)
+        if _udp:
+            full_msg += str(_udp)
+
+        self.logger.warning(full_msg)
+        self.loggerlocal.warning(full_msg)
+        self.snortlogger.info(full_msg)
 
     @set_ev_cls(snortlib.EventAlert, MAIN_DISPATCHER)
     def _dump_alert(self, ev):
         msg = ev.msg
 
         alertmsg = msg.alertmsg[0].decode('ascii')
-        # print(f'alertmsg: {alertmsg}')
         alert = str(msg.alertmsg)
-        # print(alert)
 
         pkt = packet.Packet(array.array('B', msg.pkt))
-        protocol_list = dict((p.protocol_name, p) for p in pkt.protocols if isinstance(p, packet_base.PacketBase))
+        # protocol_list = dict((p.protocol_name, p) for p in pkt.protocols if isinstance(p, packet_base.PacketBase))
 
         _eth = pkt.get_protocol(ethernet.ethernet)
         _ipv4 = pkt.get_protocol(ipv4.ipv4)
@@ -364,31 +382,162 @@ class MainApp1(app_manager.RyuApp):
 
         match = re.search("^.{0,150}", alert)
         match1 = re.split(" ", match.group(0))
+        _idle_timeout = 1800
+        _hard_timeout = 1800
+
         if "SYN_Flood" in match1:
-            self.snortlogger.info("SYN Flood Detected")
-            print("SYN Flood Detected")
-            # TODO: Blocking Packet
+            self.snortlogger.warning("SYN Flood Detected")
+            for i in range(1,len(self.datapaths)+1):
+                if i == 4 or i == 5 :
+                    # self.loggerlocal.warning("ignore form datapath {}".format(i))
+                    break
+                # self.loggerlocal.warning("accept form datapath {}".format(i))
+                _datapath = self.datapaths[i]
+                _parser = _datapath.ofproto_parser
+                
+                _match = _parser.OFPMatch(eth_dst=_eth.dst, eth_src=_eth.src,
+                    eth_type=_eth.ethertype, ipv4_src=_ipv4.src,
+                    ipv4_dst=_ipv4.dst, ip_proto=_ipv4.proto, tcp_dst=_tcp.dst_port)
+                _actions = []
+                _priority = 5000
+                _table_id = 0
+                self.add_flow(datapath=_datapath, priority=_priority, match=_match,
+                    table_id=0, idle=_idle_timeout, hard=_hard_timeout, actions=_actions)
 
         elif "UDP_Flood" in match1:
-            self.snortlogger.info("UDP Flood Detected")
-            print("UDP Flood Detected")
-            # TODO: Blocking Packet
+            self.snortlogger.warning("UDP Flood Detected")
+            for i in range(1,len(self.datapaths)+1):
+                if i == 4 or i == 5 :
+                    # self.loggerlocal.warning("ignore form datapath {}".format(i))
+                    break
+                # self.loggerlocal.warning("accept form datapath {}".format(i))
+                _datapath = self.datapaths[i]
+                _parser = _datapath.ofproto_parser
+
+                _match = _parser.OFPMatch(eth_dst=_eth.dst, eth_src=_eth.src,
+                    eth_type=_eth.ethertype, ipv4_src=_ipv4.src,
+                    ipv4_dst=_ipv4.dst, ip_proto=_ipv4.proto, udp_dst=_udp.dst_port)
+                _actions = []
+                _priority = 5000
+                _table_id = 0
+                self.add_flow(datapath=_datapath, priority=_priority, match=_match,
+                    table_id=0, idle=_idle_timeout, hard=_hard_timeout, actions=_actions)
 
         elif "HTTP_Flood" in match1:
-            self.snortlogger.info("HTTP Flood Detected")
-            print("HTTP Flood Detected")
-            # TODO: Blocking Packet
+            self.snortlogger.warning("HTTP Flood Detected")
+            for i in range(1,len(self.datapaths)+1):
+                if i == 4 or i == 5 :
+                    # self.loggerlocal.warning("ignore form datapath {}".format(i))
+                    break
+                # self.loggerlocal.warning("accept form datapath {}".format(i))
+                _datapath = self.datapaths[i]
+                _parser = _datapath.ofproto_parser
+
+                _match = _parser.OFPMatch(eth_dst=_eth.dst, eth_src=_eth.src,
+                    eth_type=_eth.ethertype, ipv4_src=_ipv4.src,
+                    ipv4_dst=_ipv4.dst, ip_proto=_ipv4.proto, tcp_dst=_tcp.dst_port)
+                _actions = []
+                _priority = 5000
+                _table_id = 0
+                self.add_flow(datapath=_datapath, priority=_priority, match=_match,
+                    table_id=0, idle=_idle_timeout, hard=_hard_timeout, actions=_actions)
 
         elif "ICMP_Flood" in match1:
-            self.snortlogger.info("ICMP Flood Detected")
-            print("ICMP Flood Detected")
-            # TODO: Blocking Packet
+            self.snortlogger.warning("ICMP Flood Detected")
+            for i in range(1,len(self.datapaths)+1):
+                if i == 4 or i == 5 :
+                    # self.loggerlocal.warning("ignore form datapath {}".format(i))
+                    break
+                # self.loggerlocal.warning("accept form datapath {}".format(i))
+                _datapath = self.datapaths[i]
+                _parser = _datapath.ofproto_parser
+
+                _match = _parser.OFPMatch(eth_dst=_eth.dst, eth_src=_eth.src,
+                    eth_type=_eth.ethertype, ipv4_src=_ipv4.src,
+                    ipv4_dst=_ipv4.dst, ip_proto=_ipv4.proto,icmpv4_type=_icmp.type,icmpv4_code=_icmp.code)
+                _actions = []
+                _priority = 5000
+                _table_id = 0
+                self.add_flow(datapath=_datapath, priority=_priority, match=_match,
+                    table_id=0, idle=_idle_timeout, hard=_hard_timeout, actions=_actions)
 
         elif "PingOfDeath" in match1:
-            self.snortlogger.info("POD Flood Detected")
-            print("PingOfDeath Detected")
-            # TODO: Blocking Packet
+            self.snortlogger.warning("POD Flood Detected")
+            for i in range(1,len(self.datapaths)+1):
+                if i == 4 or i == 5 :
+                    # self.loggerlocal.warning("ignore form datapath {}".format(i))
+                    break
+                # self.loggerlocal.warning("accept form datapath {}".format(i))
+                _datapath = self.datapaths[i]
+                _parser = _datapath.ofproto_parser
 
-        self.snortlogger.info('alertmsg: %s' % ''.join(str(msg.alertmsg)))
-        self.logger.info('alertmsg: %s' % ''.join(str(msg.alertmsg)))
+                _match = _parser.OFPMatch(eth_dst=_eth.dst, eth_src=_eth.src,
+                    eth_type=_eth.ethertype, ipv4_src=_ipv4.src,
+                    ipv4_dst=_ipv4.dst, ip_proto=_ipv4.proto,icmpv4_type=_icmp.type,icmpv4_code=_icmp.code)
+                _actions = []
+                _priority = 5000
+                _table_id = 0
+                self.add_flow(datapath=_datapath, priority=_priority, match=_match,
+                    table_id=0, idle=_idle_timeout, hard=_hard_timeout, actions=_actions)
+
+        self.logger.warning('alertmsg: %s' % ''.join(str(alertmsg)))
+        self.snortlogger.info('alertmsg: %s' % ''.join(str(alertmsg)))
+        self.loggerlocal.info('alertmsg: %s' % ''.join(str(alertmsg)))
         self.packet_print(msg.pkt)
+
+        now = time.strftime('%b %d %H:%M:%S')
+        snortlog = list(map(str, [now, 'Info', str(msg.alertmsg)]))
+        self.logger.info(snortlog)
+        self.loggerlocal.info(snortlog)
+
+    def get_packet_summary_new(self, content):
+        pkt = packet.Packet(content)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+        ethtype = eth.ethertype
+        dst = eth.dst
+        src = eth.src
+        message = '(src_mac={}, dst_mac={}, type=0x{:04x})'.format(src, dst, ethtype)
+
+        try:
+            _ipv4 = pkt.get_protocols(ipv4.ipv4)
+            self.logger.info(_ipv4)
+            try:
+                _icmp = pkt.get_protocols(icmp.icmp)
+                # self.logger.info(_icmp)
+            except Exception as error1:
+                print(error1)
+            
+            try:
+                _tcp = pkt.get_protocols(tcp.tcp)
+                # self.logger.info(_tcp)
+            except Exception as error2:
+                print(error2)
+            
+            try:
+                _udp = pkt.get_protocols(udp.udp)
+                # self.logger.info(_udp)
+            except Exception as error3:
+                print(error3)
+        except Exception as error:
+            print(error)
+        finally:
+            return message
+
+        if _ipv4:
+            src = _ipv4.src
+            dst = _ipv4.dst
+            proto = _ipv4.proto
+            message += '\n(ip_src={}, ip_dst={}, ip_proto={})'.format(src,dst, proto)
+        if _icmp:
+            type = _icmp.type
+            code = _icmp.code
+            message += '\n(icmp_code={}, icmp_type={})'.format(type,code)
+        if _tcp:
+            sport = _tcp.src_port
+            dport = _tcp.dst_port
+            message += '\n(tcp_sport={}, tcp_dport={})'.format(sport,dport)
+        if _udp:
+            sport = _udp.src_port
+            dport = _udp.dst_port
+            message += '\n(udp_sport={}, udp_dport={})'.format(sport,dport)
+        return message
