@@ -113,10 +113,15 @@ ICMP = icmp.icmp.__name__
 TCP = tcp.tcp.__name__
 UDP = udp.udp.__name__
 
-MAX_SUSPENDPACKETS = 50  # Threshold of the packet suspends thread count.
+# MAX_SUSPENDPACKETS = 50  # Threshold of the packet suspends thread count.
+# MAX_SUSPENDPACKETS = 250  # Threshold of the packet suspends thread count.
+MAX_SUSPENDPACKETS = 2500  # Threshold of the packet suspends thread count.
 
-ARP_REPLY_TIMER = 2  # sec
-OFP_REPLY_TIMER = 1.0  # sec
+
+# ARP_REPLY_TIMER = 2  # sec
+ARP_REPLY_TIMER = 3  # sec
+# OFP_REPLY_TIMER = 1.0  # sec
+OFP_REPLY_TIMER = 2.0  # sec
 CHK_ROUTING_TBL_INTERVAL = 1800  # sec
 
 SWITCHID_PATTERN = dpid_lib.DPID_PATTERN + r'|all'
@@ -342,8 +347,9 @@ class RouterController(ControllerBase):
         cls._LOGGER = logger
         cls._LOGGER.propagate = False
         hdlr = logging.StreamHandler()
-        fmt_str = '[RT][%(levelname)s] switch_id=%(sw_id)s: %(message)s'
-        hdlr.setFormatter(logging.Formatter(fmt_str))
+        # hdlr = logging.StreamHandler(sys.stdout)
+        fmt_str = '[%(asctime)s.%(msecs)06d] [RT]%(levelname)s switch_id=%(sw_id)s: %(message)s'
+        hdlr.setFormatter(logging.Formatter(fmt_str, '%Y-%m-%d %H:%M:%S'))
         cls._LOGGER.addHandler(hdlr)
 
     @classmethod
@@ -1813,7 +1819,7 @@ class OfCtl_after_v1_2(OfCtl):
         self.logger.info('Delete flow [cookie=0x%x]', cookie, extra=self.sw_id)
 
 
-'''
+
 @OfCtl.register_of_version(ofproto_v1_2.OFP_VERSION)
 class OfCtl_v1_2(OfCtl_after_v1_2):
 
@@ -1837,9 +1843,6 @@ class OfCtl_v1_2(OfCtl_after_v1_2):
         stats = ofp_parser.OFPFlowStatsRequest(self.dp, 0, ofp.OFPP_ANY,
                                                ofp.OFPG_ANY, 0, 0, match)
         return self.send_stats_request(stats, waiters)
-
-'''
-
 
 @OfCtl.register_of_version(ofproto_v1_3.OFP_VERSION)
 class OfCtl_v1_3(OfCtl_after_v1_2):
