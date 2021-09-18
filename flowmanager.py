@@ -57,16 +57,19 @@ import array
 PYTHON3 = sys.version_info > (3, 0)
 LOG_FILE_NAME = 'flwmgr.log'
 SNORT_LOG_FILE_NAME = 'snortalert.log'
+MITIGATE_LOG_FILE_NAME = 'mitigate.log'
+ANOMALY_LOG_FILE_NAME = 'anomalyalert.log'
 print("You are using Python v" + '.'.join(map(str, sys.version_info)))
 
 sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from flow_monitor import Tracker
 
+
 class FlowManager(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     _CONTEXTS = {'wsgi': WSGIApplication,
-                 'dpset': dpset.DPSet,}
+                 'dpset': dpset.DPSet}
 
     port_id = {
         "IN_PORT": 0xfffffff8,
@@ -83,6 +86,8 @@ class FlowManager(app_manager.RyuApp):
     MAGIC_COOKIE = 0x00007ab700000000
     logname = 'flwmgr'
     snortlogname = 'snortalert'
+    mitigatelogname = 'mitigate'
+    anomalylogname = 'anomaly'
 
     def __init__(self, *args, **kwargs): # Init Object
         super(FlowManager, self).__init__(*args, **kwargs)
@@ -116,6 +121,8 @@ class FlowManager(app_manager.RyuApp):
         self.logfile = os.path.join(cfd, LOG_FILE_NAME)
         self.logger = self.get_logger(self.logname, self.logfile, 'INFO', 0)
         self.snortlogfile = os.path.join(cfd, SNORT_LOG_FILE_NAME)
+        self.mitigatelogfile = os.path.join(cfd, MITIGATE_LOG_FILE_NAME)
+        self.anomalylogfile = os.path.join(cfd, ANOMALY_LOG_FILE_NAME)
 
     def get_logger(self, logname, logfile, loglevel, propagate): # Init Flowmanager Logger
         """Create and return a logger object."""
@@ -172,9 +179,31 @@ class FlowManager(app_manager.RyuApp):
                 items.append(lst)
         return items
 
-    def read_snort_logs(self): # Read snortalert.log (Tested on version 0.2.0)
+    def read_snort_logs(self): # # Read snortalert.log (Tested on version 0.2.0 and 0.3.2)
         items = []
         with open(self.snortlogfile, 'r') as my_file:
+            while True:
+                line = my_file.readline()
+                if not line:
+                    break
+                lst = line.split('\t')
+                items.append(lst)
+        return items
+
+    def read_mitigate_logs(self): # # Read mitigate.log (Tested on version 0.2.0 and 0.3.2)
+        items = []
+        with open(self.mitigatelogfile, 'r') as my_file:
+            while True:
+                line = my_file.readline()
+                if not line:
+                    break
+                lst = line.split('\t')
+                items.append(lst)
+        return items
+
+    def read_anomaly_logs(self): # # Read anomalyalert.log (Tested on version 0.2.0 and 0.3.2)
+        items = []
+        with open(self.anomalylogfile, 'r') as my_file:
             while True:
                 line = my_file.readline()
                 if not line:
@@ -191,15 +220,15 @@ class FlowManager(app_manager.RyuApp):
             'COPY_TTL_IN': (parser.OFPActionCopyTtlIn, None),
             'POP_PBB': (parser.OFPActionPopPbb, None),
             'PUSH_PBB': (parser.OFPActionPushPbb, 'ethertype'),
-            'POP_MPLS': (parser.OFPActionPopMpls, 'ethertype'),
-            'PUSH_MPLS': (parser.OFPActionPushMpls, 'ethertype'),
-            'POP_VLAN': (parser.OFPActionPopVlan, None),
-            'PUSH_VLAN': (parser.OFPActionPushVlan, 'ethertype'),
-            'DEC_MPLS_TTL': (parser.OFPActionDecMplsTtl, None),
-            'SET_MPLS_TTL': (parser.OFPActionSetMplsTtl, 'mpls_ttl'),
+            # 'POP_MPLS': (parser.OFPActionPopMpls, 'ethertype'),
+            # 'PUSH_MPLS': (parser.OFPActionPushMpls, 'ethertype'),
+            # 'POP_VLAN': (parser.OFPActionPopVlan, None),
+            # 'PUSH_VLAN': (parser.OFPActionPushVlan, 'ethertype'),
+            # 'DEC_MPLS_TTL': (parser.OFPActionDecMplsTtl, None),
+            # 'SET_MPLS_TTL': (parser.OFPActionSetMplsTtl, 'mpls_ttl'),
             'DEC_NW_TTL': (parser.OFPActionDecNwTtl, None),
             'SET_NW_TTL': (parser.OFPActionSetNwTtl, 'nw_ttl'),
-            'SET_QUEUE': (parser.OFPActionSetQueue, 'queue_id'),
+            # 'SET_QUEUE': (parser.OFPActionSetQueue, 'queue_id'),
             'GROUP': (parser.OFPActionGroup, 'group_id'),
             'OUTPUT': (parser.OFPActionOutput, 'port'),
         }
@@ -719,9 +748,9 @@ class FlowManager(app_manager.RyuApp):
 
         return ''
   
-    # ================================================================================
-    #  Event Handlers ================================================================
-    # ================================================================================
+    # ==============================
+    #  Event Handlers ==============
+    # ==============================
 
     @set_ev_cls([  # ofp_event.EventOFPStatsReply,
         ofp_event.EventOFPDescStatsReply,
@@ -775,24 +804,25 @@ class FlowManager(app_manager.RyuApp):
             reason = 'unknown'
 
         # TODO: needs to be of the same format as packet-in
-        # self.logger.info('FlowRemoved\t'
-        #                  'cookie=%d priority=%d reason=%s table_id=%d '
-        #                  'duration_sec=%d duration_nsec=%d '
-        #                  'idle_timeout=%d hard_timeout=%d '
-        #                  'packet_count=%d byte_count=%d match.fields=%s',
-        #                  msg.cookie, msg.priority, reason, msg.table_id,
-        #                  msg.duration_sec, msg.duration_nsec,
-        #                  msg.idle_timeout, msg.hard_timeout,
-        #                  msg.packet_count, msg.byte_count, msg.match)
+        self.logger.info('FlowRemoved\t'
+                         'cookie=%d priority=%d reason=%s table_id=%d '
+                         'duration_sec=%d duration_nsec=%d '
+                         'idle_timeout=%d hard_timeout=%d '
+                         'packet_count=%d byte_count=%d match.fields=%s',
+                         msg.cookie, msg.priority, reason, msg.table_id,
+                         msg.duration_sec, msg.duration_nsec,
+                         msg.idle_timeout, msg.hard_timeout,
+                         msg.packet_count, msg.byte_count, msg.match)
 
     @set_ev_cls(ofp_event.EventOFPErrorMsg,
                 [HANDSHAKE_DISPATCHER, CONFIG_DISPATCHER, MAIN_DISPATCHER])
     def error_msg_handler(self, ev):
         msg = ev.msg
+
         # TODO: needs to be of the same format as packet-in
-        # self.logger.error('ErrorMsg\ttype=0x%02x code=0x%02x '
-        #                   'message=%s',
-        #                   msg.type, msg.code, utils.hex_array(msg.data))
+        self.logger.error('ErrorMsg\ttype=0x%02x code=0x%02x '
+                          'message=%s',
+                          msg.type, msg.code, utils.hex_array(msg.data))
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
