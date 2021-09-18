@@ -25,13 +25,17 @@ import time
 PYTHON3 = sys.version_info > (3, 0)
 
 class WebApi(ControllerBase):
+    
     def __init__(self, req, link, data, **config):
         super(WebApi, self).__init__(req, link, data, **config)
         self.api = data["webctl"]
         self.rpc_clients = data["rpc_clients"]
         self.rootdir = os.path.dirname(os.path.abspath(__file__))
-        # print("ROOT-DIR :: {}".format(self.rootdir))
 
+    # ==============================
+    #  Utility Method ==============
+    # ==============================
+    
     def make_response(self, filename):
         filetype, _ = mimetypes.guess_type(filename)
         if not filetype:
@@ -39,6 +43,10 @@ class WebApi(ControllerBase):
         res = Response(content_type=filetype)
         res.body = open(filename, 'rb').read()
         return res
+
+    # ==============================
+    #  Route Method ==============
+    # ==============================
 
     @route('monitor', '/status', methods=['GET'])
     def get_flow_stats(self, req, **_kwargs):
@@ -130,7 +138,6 @@ class WebApi(ControllerBase):
 
         return Response(status=400)  # bad request
 
-    # TODO: merge the next two methods
     @route('monitor', '/flowdel', methods=['POST'])
     def post_flow_delete(self, req, **_kwargs):
         """Receive flows delete request
@@ -152,7 +159,7 @@ class WebApi(ControllerBase):
             res.text = s if PYTHON3 else unicode(s, "utf-8")
             return res
         return Response(status=400)  # bad request
-    
+
     @route('monitor', '/logs', methods=['GET'])
     def get_logs(self, req, **_kwargs):
         """Get log mesages
@@ -164,12 +171,23 @@ class WebApi(ControllerBase):
             return res
         return Response(status=400)  # bad request
 
-    @route('monitor', '/oldlogs', methods=['GET'])
-    def get_oldlogs(self, req, **_kwargs):
+    @route('monitor', '/anologs', methods=['GET'])
+    def get_anomaly_logs(self, req, **_kwargs):
         """Get log mesages
         """
         if req.GET:
-            logs = self.api.read_logs()
+            logs = self.api.read_anomaly_logs()
+            res = Response(content_type="application/json")
+            res.json = logs
+            return res
+        return Response(status=400)  # bad request
+
+    @route('monitor', '/mitigatelogs', methods=['GET'])
+    def get_mitigate_logs(self, req, **_kwargs):
+        """Get mitigate log mesages
+        """
+        if req.GET:
+            logs = self.api.read_mitigate_logs()
             res = Response(content_type="application/json")
             res.json = logs
             return res
@@ -177,7 +195,7 @@ class WebApi(ControllerBase):
 
     @route('monitor', '/snortlogs', methods=['GET'])
     def get_snort_logs(self, req, **_kwargs):
-        """Get snort snort log mesages
+        """Get snort log mesages
         """
         if req.GET:
             logs = self.api.read_snort_logs()
@@ -214,6 +232,7 @@ class WebApi(ControllerBase):
             res.text = s if PYTHON3 else unicode(s, "utf-8")
             return res
         return Response(status=400)  # bad request
+
 
     # @route('monitor', '/stream', methods=['GET'])
     # def get_log_SSE(self, req, **_kwargs):
