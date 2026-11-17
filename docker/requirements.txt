@@ -18,7 +18,7 @@ dbus-python==1.2.18
 debtcollector==2.3.0
 distro==1.7.0
 distro-info==1.1+ubuntu0.2
-dnspython==2.8.0
+dnspython==2.9.2
 docutils==0.17.1
 eventlet==0.40.4
 greenlet==3.3.2
